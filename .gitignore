@@ -1,0 +1,4 @@
+.DS_Store
+fat12-cli
+*.img
+*.elf
