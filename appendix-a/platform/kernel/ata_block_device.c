@@ -46,15 +46,16 @@ static inline void insw(uint16_t port, void *addr, uint32_t byte_count)
 
     /* Generates:
             cld        # EDI must count up, not down
-            rep insw   # read `word_count` words from `port` into [EDI],
-       advancing EDI each time
+            rep insw   # read `word_count` words from `port`
+                       # into [EDI], advancing EDI each time
 
        buf        -> EDI  ("+D", INS's fixed destination register)
        word_count -> ECX  ("+c", REP's fixed counter register)
-       port       -> DX   ("d", INS's fixed port register - no immediate
-       form exists) memory clobber: buf's contents change, but the
-       compiler only sees the EDI register value change, not what it
-       points to */
+       port       -> DX   ("d", INS's fixed port register, no
+                           immediate form exists)
+
+       memory clobber: buf's contents change, but the compiler only
+       sees the EDI register value change, not what it points to */
     __asm__ volatile("cld\n\t"
                      "rep insw"
                      : "+D"(buf), "+c"(word_count)
@@ -71,15 +72,16 @@ static inline void outsw(uint16_t port, const void *addr,
 
     /* Generates:
             cld         # ESI must count up, not down
-            rep outsw   # write `word_count` words from [ESI] to `port`,
-       advancing ESI each time
+            rep outsw   # write `word_count` words from [ESI]
+                        # to `port`, advancing ESI each time
 
        buf        -> ESI  ("+S", OUTS's fixed source register)
        word_count -> ECX  ("+c", REP's fixed counter register)
-       port       -> DX   ("d", OUTS's fixed port register - no
-       immediate form exists) memory clobber: the compiler only sees the
-       ESI register value, not that this instruction reads whatever it
-       points to */
+       port       -> DX   ("d", OUTS's fixed port register, no
+                           immediate form exists)
+
+       memory clobber: the compiler only sees the ESI register value,
+       not that this instruction reads whatever it points to */
     __asm__ volatile("cld\n\t"
                      "rep outsw"
                      : "+S"(buf), "+c"(word_count)

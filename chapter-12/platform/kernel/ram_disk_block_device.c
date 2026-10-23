@@ -39,6 +39,7 @@ int block_device_read(BlockDevice *device, uint64_t lba,
     size_t offset = (size_t)(lba * device->sector_size);
     size_t total_bytes = sector_count * device->sector_size;
     memcpy(buffer, device->data + offset, total_bytes);
+
     return 0;
 }
 
@@ -52,6 +53,7 @@ int block_device_write(BlockDevice *device, uint64_t lba,
     size_t offset = (size_t)(lba * device->sector_size);
     size_t total_bytes = sector_count * device->sector_size;
     memcpy(device->data + offset, buffer, total_bytes);
+
     return 0;
 }
 
@@ -59,6 +61,7 @@ int block_device_close(BlockDevice *device)
 {
     free(device->data);
     free(device);
+
     return 0;
 }
 

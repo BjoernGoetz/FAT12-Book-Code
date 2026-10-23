@@ -138,8 +138,7 @@ int toupper(int c)
 
 time_t time(time_t *out)
 {
-    if (out != NULL)
-        *out = 0;
+    (void)out;
     return 0;
 }
 
@@ -152,5 +151,6 @@ struct tm *localtime(const time_t *seconds)
                             .tm_mon = 0,
                             .tm_mday = 1,
                             .tm_hour = 12};
+
     return &now;
 }

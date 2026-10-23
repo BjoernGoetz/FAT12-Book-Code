@@ -8,7 +8,6 @@ gcc \
   -Wextra \
   -iquote include \
   -iquote src \
-  -iquote platform/kernel \
   -T kernel.ld \
   -o kernel.elf \
   src/*.c \

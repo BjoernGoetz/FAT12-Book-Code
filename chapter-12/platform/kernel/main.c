@@ -25,92 +25,66 @@ void kernel_main(void)
     vga_print("FAT12 kernel booted\n\n");
     vga_print("Opening block device ..... ");
     BlockDevice *device = ram_disk_block_device_open();
-    /* Also show where the volume lives in RAM, for
-       inspecting it from outside */
-    vga_print("OK (RAM disk at ");
+    vga_print("OK\n\n    RAM disk at ");
     print_hex((uint32_t)ram_disk_block_device_address(device));
-    vga_print(")\n");
+    vga_print("\n\n");
 
-    /* Format a fresh volume */
     vga_print("Formatting volume ........ ");
     FormatParams params = {"MYKERNEL"};
-    if (fat12_format(device, params) != 0) {
-        vga_print("FAILED\n");
+    if (fat12_format(device, params) != 0)
         return;
-    }
     vga_print("OK\n");
 
     vga_print("Mounting volume .......... ");
     FAT12FS *fs = fat12_mount(device);
-    if (fs == NULL) {
-        vga_print("FAILED\n");
+    if (fs == NULL)
         return;
-    }
     vga_print("OK\n");
 
-    /* Create a file in the root directory */
     vga_print("Writing /HELLO.TXT ....... ");
     File *f = fat12_open(fs, "/HELLO.TXT", 'w');
-    if (f != NULL) {
-        const char *text = "Hello, FAT12!\n";
-        uint32_t written = fat12_write(f, text, strlen(text));
+    if (f == NULL)
+        return;
+    const char *text = "Hello from the kernel!\n";
+    uint32_t written = fat12_write(f, text, strlen(text));
+    if (fat12_close(f) != 0 || written != strlen(text))
+        return;
+    vga_print("OK\n");
 
-        /* Closing writes the data to the volume, so it can fail too */
-        if (fat12_close(f) == 0 && written == strlen(text))
-            vga_print("OK\n");
-        else
-            vga_print("FAILED\n");
-    } else {
-        vga_print("FAILED\n");
-    }
-
-    /* List root directory */
     vga_print("Listing / ................ ");
     Directory *dir = fat12_opendir(fs, "/");
-    if (dir != NULL) {
-        DirEntry entry;
-
-        vga_print("OK\n\n");
-        while (fat12_readdir(dir, &entry) != -1) {
-            vga_print("    ");
-            vga_print(entry.name);
-            vga_print("\n");
-        }
+    if (dir == NULL)
+        return;
+    vga_print("OK\n\n");
+    DirEntry entry;
+    while (fat12_readdir(dir, &entry) != -1) {
+        vga_print("    ");
+        vga_print(entry.name);
         vga_print("\n");
-
-        fat12_closedir(dir);
-    } else {
-        vga_print("FAILED\n");
     }
+    vga_print("\n");
+    fat12_closedir(dir);
 
-    /* Read /HELLO.TXT back from root */
     vga_print("Reading /HELLO.TXT ....... ");
     f = fat12_open(fs, "/HELLO.TXT", 'r');
-    if (f != NULL) {
-        char buf[256];
-        uint32_t bytes;
-
-        vga_print("OK\n\n    ");
-        /* Leave room for the '\0' vga_print needs */
-        while ((bytes = fat12_read(f, buf, sizeof(buf) - 1)) > 0) {
-            buf[bytes] = '\0';
-            vga_print(buf);
-        }
-        vga_print("\n");
-
-        fat12_close(f);
-    } else {
-        vga_print("FAILED\n");
+    if (f == NULL)
+        return;
+    vga_print("OK\n\n    ");
+    char buf[256];
+    uint32_t bytes;
+    while ((bytes = fat12_read(f, buf, sizeof(buf) - 1)) > 0) {
+        buf[bytes] = '\0';
+        vga_print(buf);
     }
+    vga_print("\n");
+    fat12_close(f);
 
     vga_print("Unmounting volume ........ ");
     fat12_umount(fs);
     vga_print("OK\n");
 
     vga_print("Closing block device ..... ");
-    if (block_device_close(device) != 0) {
-        vga_print("FAILED\n");
+    if (block_device_close(device) != 0)
         return;
-    }
     vga_print("OK\n");
 }

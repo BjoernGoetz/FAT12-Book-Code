@@ -1,14 +1,6 @@
 /* _start, defined in startup.s, is the entry point */
 ENTRY(_start)
 
-/* One loadable segment per permission set */
-PHDRS
-{
-    text   PT_LOAD FLAGS(5); /* R+X */
-    rodata PT_LOAD FLAGS(4); /* R   */
-    data   PT_LOAD FLAGS(6); /* R+W */
-}
-
 /* Lays out where each section goes in the final kernel binary */
 SECTIONS
 {
@@ -16,12 +8,21 @@ SECTIONS
     . = 1M;
 
     .text : {
-        /* The bootloader looks for the Multiboot header in the
-           first 8 KiB, so it goes first */
+        /* Keeps the .multiboot section from startup.s at the start of
+           .text, so the loader finds the header */
         KEEP(*(.multiboot))
         *(.text*)
     } :text
     .rodata : { *(.rodata*) } :rodata
     .data   : { *(.data*) } :data
     .bss    : { *(COMMON) *(.bss*) } :data
+}
+
+/* Optional: splits the kernel into loadable segments, one per
+   permission set, instead of one segment that allows everything */
+PHDRS
+{
+    text   PT_LOAD FLAGS(5); /* R+X */
+    rodata PT_LOAD FLAGS(4); /* R   */
+    data   PT_LOAD FLAGS(6); /* R+W */
 }

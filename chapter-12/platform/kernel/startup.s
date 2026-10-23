@@ -1,26 +1,36 @@
-# Multiboot header: identifies this binary to the bootloader as bootable
-.set MAGIC,    0x1BADB002        # Magic number the bootloader scans for
-.set FLAGS,    0                 # No optional Multiboot features requested
-.set CHECKSUM, -(MAGIC + FLAGS)  # magic + flags + checksum must sum to zero
-.section .multiboot              # Must land in the kernel's first 8 KiB
-.long MAGIC
-.long FLAGS
-.long CHECKSUM
+# Multiboot header: the magic number the bootloader scans for, flags
+# requesting no features, and a checksum that makes all three sum
+# to zero
+.section .multiboot
+.long 0x1BADB002
+.long 0
+.long -(0x1BADB002 + 0)
 
+# Entry point: execution starts at _start
+.global _start
+
+# Code section
 .section .text
-.global _start                   # Export the entry point to the linker
 
+# The loader jumps here: point ESP at our stack before any C code
+# runs, then hand off to kernel_main in C
 _start:
-    mov $stack_top, %esp         # Point ESP at our stack before any C code runs
-    call kernel_main             # Hand off to the C kernel
+    mov $stack_top, %esp
+    call kernel_main
 
-halt:                            # kernel_main returned: nothing left to run
-    cli                          # disable interrupts
-    hlt                          # halt the CPU
-    jmp halt                     # if an NMI wakes it anyway, halt again
+# kernel_main returned, so nothing is left to run: disable interrupts
+# and halt the CPU, halting again if a non-maskable interrupt (one
+# that cli can't block) wakes it anyway
+halt:
+    cli
+    hlt
+    jmp halt
 
-# Reserve the stack _start points ESP at, growing down from stack_top
+# Uninitialized data section
 .section .bss
+
+# Space for a 16 KiB stack for our C code, growing down from
+# stack_top toward stack_bottom, 16-byte aligned as C expects
 .align 16
 stack_bottom:
 .skip 16384

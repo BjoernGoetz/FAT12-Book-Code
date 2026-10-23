@@ -1,23 +1,25 @@
 #include <stdint.h>
 #include "vga.h"
 
-#define VGA_WIDTH          80
-#define VGA_HEIGHT         25
-#define VGA_WHITE_ON_BLACK 0x0F
+#define VGA_WIDTH  80
+#define VGA_HEIGHT 25
 
-/* The VGA text buffer at its fixed address. volatile because the
-   display hardware reads it, not our code: without it, the compiler
-   could drop or merge writes it thinks nothing ever reads */
+/* Where the VGA screen starts in memory, always at the same
+   address. volatile because the display hardware reads it, not our
+   code: without it, the compiler could drop or merge writes it
+   thinks nothing ever reads */
 static volatile uint16_t *vga = (uint16_t *)0xB8000;
 
-/* Where the next character goes: right after the last one we printed */
+/* Keeps track of where the last print ended, so the
+   next one continues there */
 static int cursor_row = 0;
 static int cursor_col = 0;
 
-/* Packs a character and our fixed attribute into one 16-bit cell */
-static uint16_t char_to_cell(char c)
+/* Returns the 16-bit value for a cell showing the given character as
+   white text on a black background */
+static uint16_t char_to_cell(uint8_t character)
 {
-    return (uint16_t)(uint8_t)c | ((uint16_t)VGA_WHITE_ON_BLACK << 8);
+    return (0x0F << 8) | character;
 }
 
 void vga_clear(void)
@@ -34,6 +36,8 @@ void vga_print(const char *str)
         if (cursor_row >= VGA_HEIGHT)
             return;
 
+        /* A newline prints nothing: it only moves the cursor to the
+           start of the next row */
         if (str[i] == '\n') {
             cursor_col = 0;
             cursor_row++;
