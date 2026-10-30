@@ -18,6 +18,31 @@
 #define NAME_FREE 0xE5
 #define NAME_END  0x00
 
+struct FAT12FS {
+    BlockDevice *device;
+    BootSector bs;
+    uint32_t fat_lba;
+    uint32_t root_dir_lba;
+    uint32_t root_dir_sectors;
+};
+
+struct Directory {
+    DirectoryEntry *entries;
+    uint32_t count;
+    uint32_t offset;
+};
+
+static BootSector read_boot_sector(BlockDevice *device);
+static void decode_8_3_name(const DirectoryEntry *entry, char *out);
+static Timestamp decode_timestamp(uint16_t time, uint16_t date);
+static DirectoryEntry *read_root_directory(FAT12FS *fs);
+static bool is_free_entry(const DirectoryEntry *entry);
+static bool is_end_of_directory(const DirectoryEntry *entry);
+static bool is_volume_label(const DirectoryEntry *entry);
+static DirectoryEntry *next_valid_entry(DirectoryEntry *entries,
+                                        uint32_t count,
+                                        uint32_t *offset);
+
 static BootSector read_boot_sector(BlockDevice *device)
 {
     uint32_t sector_size = block_device_sector_size(device);
@@ -31,15 +56,6 @@ static BootSector read_boot_sector(BlockDevice *device)
     return result;
 }
 
-struct FAT12FS {
-    BlockDevice *device;
-    BootSector bs;
-    uint32_t fat_lba;
-    uint32_t fat_sectors;
-    uint32_t root_dir_lba;
-    uint32_t root_dir_sectors;
-};
-
 FAT12FS *fat12_mount(BlockDevice *device)
 {
     DBG_PRINT("[ fat12        ] --- fat12_mount() ---\n");
@@ -47,8 +63,8 @@ FAT12FS *fat12_mount(BlockDevice *device)
     fs->device = device;
     fs->bs = read_boot_sector(device);
 
-    /* jump, boot_code, reserved_nt: not used by FAT
-       itself, so we skip them */
+    /* jump, boot_code: machine code, not data; reserved_nt: Windows
+       NT's own flags byte. We skip all three */
     DBG_PRINT("[ fat12        ] OEM Name: \"%.8s\"\n", fs->bs.oem_name);
     DBG_PRINT("[ fat12        ] Bytes Per Sector: %u\n",
               fs->bs.bpb.bytes_per_sector);
@@ -87,8 +103,8 @@ FAT12FS *fat12_mount(BlockDevice *device)
     DBG_PRINT("[ fat12        ] Signature: 0x%04x\n", fs->bs.signature);
 
     fs->fat_lba = fs->bs.bpb.reserved_sector_count;
-    fs->fat_sectors = fs->bs.bpb.num_fats * fs->bs.bpb.fat_size_16;
-    fs->root_dir_lba = fs->fat_lba + fs->fat_sectors;
+    uint32_t fat_sectors = fs->bs.bpb.num_fats * fs->bs.bpb.fat_size_16;
+    fs->root_dir_lba = fs->fat_lba + fat_sectors;
     fs->root_dir_sectors = ((fs->bs.bpb.root_entry_count *
                              DIRECTORY_ENTRY_SIZE) +
                             (fs->bs.bpb.bytes_per_sector - 1)) /
@@ -96,7 +112,7 @@ FAT12FS *fat12_mount(BlockDevice *device)
 
     DBG_PRINT("[ fat12        ] FAT start LBA: %u\n", fs->fat_lba);
     DBG_PRINT("[ fat12        ] FAT region size (sectors): %u\n",
-              fs->fat_sectors);
+              fat_sectors);
     DBG_PRINT("[ fat12        ] Root dir start LBA: %u\n",
               fs->root_dir_lba);
     DBG_PRINT("[ fat12        ] Root dir size (sectors): %u\n",
@@ -213,12 +229,6 @@ static DirectoryEntry *next_valid_entry(DirectoryEntry *entries,
 
     return NULL;
 }
-
-struct Directory {
-    DirectoryEntry *entries;
-    uint32_t count;
-    uint32_t offset;
-};
 
 Directory *fat12_opendir(FAT12FS *fs, const char *path)
 {

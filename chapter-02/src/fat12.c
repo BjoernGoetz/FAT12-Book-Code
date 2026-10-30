@@ -5,6 +5,13 @@
 #include "layout.h"
 #include "fat12.h"
 
+struct FAT12FS {
+    BlockDevice *device;
+    BootSector bs;
+};
+
+static BootSector read_boot_sector(BlockDevice *device);
+
 static BootSector read_boot_sector(BlockDevice *device)
 {
     uint32_t sector_size = block_device_sector_size(device);
@@ -18,11 +25,6 @@ static BootSector read_boot_sector(BlockDevice *device)
     return result;
 }
 
-struct FAT12FS {
-    BlockDevice *device;
-    BootSector bs;
-};
-
 FAT12FS *fat12_mount(BlockDevice *device)
 {
     DBG_PRINT("[ fat12        ] --- fat12_mount() ---\n");
@@ -30,8 +32,8 @@ FAT12FS *fat12_mount(BlockDevice *device)
     fs->device = device;
     fs->bs = read_boot_sector(device);
 
-    /* jump, boot_code, reserved_nt: not used by FAT
-       itself, so we skip them */
+    /* jump, boot_code: machine code, not data; reserved_nt: Windows
+       NT's own flags byte. We skip all three */
     DBG_PRINT("[ fat12        ] OEM Name: \"%.8s\"\n", fs->bs.oem_name);
     DBG_PRINT("[ fat12        ] Bytes Per Sector: %u\n",
               fs->bs.bpb.bytes_per_sector);

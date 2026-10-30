@@ -13,14 +13,18 @@
 #define ATA_STATUS       0x1F7
 #define ATA_COMMAND      0x1F7
 
+#define ATA_STATUS_BUSY         0x80
+#define ATA_STATUS_ERROR        0x01
+#define ATA_STATUS_DATA_REQUEST 0x08
+#define ATA_STATUS_DRIVE_FAULT  0x20
+
+#define ATA_COMMAND_IDENTIFY    0xEC
+#define ATA_COMMAND_READ        0x20
+#define ATA_COMMAND_WRITE       0x30
+#define ATA_COMMAND_CACHE_FLUSH 0xE7
+
 static inline void outb(uint16_t port, uint8_t val)
 {
-    /* Generates:
-           outb %al, %dx
-
-       val  -> AL  ("a")
-       port -> DX  ("Nd" would allow an 8-bit immediate instead of DX,
-                    but every port here is > 0xFF, so DX always wins) */
     __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
@@ -28,11 +32,6 @@ static inline uint8_t inb(uint16_t port)
 {
     uint8_t ret;
 
-    /* Generates:
-            inb %dx, %al
-
-       port -> DX  ("Nd", same reasoning as outb: always DX here)
-       ret  <- AL  ("=a") */
     __asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
 
     return ret;
@@ -41,21 +40,8 @@ static inline uint8_t inb(uint16_t port)
 static inline void insw(uint16_t port, void *addr, uint32_t byte_count)
 {
     uint16_t *buf = (uint16_t *)addr;
-    /* rep insw moves whole 16-bit words, not bytes */
     uint32_t word_count = byte_count / 2;
 
-    /* Generates:
-            cld        # EDI must count up, not down
-            rep insw   # read `word_count` words from `port`
-                       # into [EDI], advancing EDI each time
-
-       buf        -> EDI  ("+D", INS's fixed destination register)
-       word_count -> ECX  ("+c", REP's fixed counter register)
-       port       -> DX   ("d", INS's fixed port register, no
-                           immediate form exists)
-
-       memory clobber: buf's contents change, but the compiler only
-       sees the EDI register value change, not what it points to */
     __asm__ volatile("cld\n\t"
                      "rep insw"
                      : "+D"(buf), "+c"(word_count)
@@ -67,21 +53,8 @@ static inline void outsw(uint16_t port, const void *addr,
                          uint32_t byte_count)
 {
     const uint16_t *buf = (const uint16_t *)addr;
-    /* rep outsw moves whole 16-bit words, not bytes */
     uint32_t word_count = byte_count / 2;
 
-    /* Generates:
-            cld         # ESI must count up, not down
-            rep outsw   # write `word_count` words from [ESI]
-                        # to `port`, advancing ESI each time
-
-       buf        -> ESI  ("+S", OUTS's fixed source register)
-       word_count -> ECX  ("+c", REP's fixed counter register)
-       port       -> DX   ("d", OUTS's fixed port register, no
-                           immediate form exists)
-
-       memory clobber: the compiler only sees the ESI register value,
-       not that this instruction reads whatever it points to */
     __asm__ volatile("cld\n\t"
                      "rep outsw"
                      : "+S"(buf), "+c"(word_count)
@@ -89,29 +62,25 @@ static inline void outsw(uint16_t port, const void *addr,
                      : "memory");
 }
 
-#define ATA_STATUS_BUSY 0x80
-
-static inline void ata_wait_busy_clear(void)
+/* four dummy status reads take roughly 400ns, the time a drive needs
+   before its status register is trustworthy */
+static inline void ata_delay_400ns(void)
 {
-    while (inb(ATA_STATUS) & ATA_STATUS_BUSY)
-        ;
+    for (int i = 0; i < 4; i++)
+        inb(ATA_STATUS);
 }
 
 static inline void ata_issue_command(uint8_t command, uint32_t lba,
                                      uint8_t sector_count)
 {
-    ata_wait_busy_clear();
+    /* wait until the selected drive is done,
+       leaving the channel idle */
+    while (inb(ATA_STATUS) & ATA_STATUS_BUSY)
+        ;
 
     /* master drive, LBA mode, plus the LBA's top 4 bits (27:24) */
     outb(ATA_DRIVE, 0xE0 | ((lba >> 24) & 0x0F));
-
-    /* four dummy reads: lets the status register settle before it's
-       trustworthy. QEMU's IDE emulation never needs this delay, but
-       real hardware often does */
-    inb(ATA_STATUS);
-    inb(ATA_STATUS);
-    inb(ATA_STATUS);
-    inb(ATA_STATUS);
+    ata_delay_400ns();
 
     outb(ATA_SECTOR_COUNT, sector_count);
     outb(ATA_LBA_LOW, (uint8_t)lba);
@@ -120,38 +89,52 @@ static inline void ata_issue_command(uint8_t command, uint32_t lba,
 
     /* triggers execution, so it must be last */
     outb(ATA_COMMAND, command);
+    ata_delay_400ns();
 
-    ata_wait_busy_clear();
+    /* wait until the drive has accepted this command */
+    while (inb(ATA_STATUS) & ATA_STATUS_BUSY)
+        ;
 }
 
-#define ATA_COMMAND_IDENTIFY    0xEC
-#define ATA_STATUS_DATA_REQUEST 0x08
+static inline int ata_wait_data_request(void)
+{
+    while (1) {
+        uint8_t status = inb(ATA_STATUS);
+
+        /* while BSY is set, every other status bit is meaningless */
+        if (status & ATA_STATUS_BUSY)
+            continue;
+
+        /* a failed command never raises DRQ, so stop waiting for it */
+        if (status & (ATA_STATUS_ERROR | ATA_STATUS_DRIVE_FAULT))
+            return -1;
+
+        if (status & ATA_STATUS_DATA_REQUEST)
+            return 0;
+    }
+}
 
 struct BlockDevice {
     uint32_t sector_size;
     uint64_t sector_count;
 };
 
-static inline void ata_wait_data_request(void)
-{
-    while (!(inb(ATA_STATUS) & ATA_STATUS_DATA_REQUEST))
-        ;
-}
-
 BlockDevice *ata_block_device_open(void)
 {
     ata_issue_command(ATA_COMMAND_IDENTIFY, 0, 0);
 
-    ata_wait_data_request();
-    uint16_t buf[256];
-    insw(ATA_DATA, buf, sizeof(buf));
-
-    uint32_t sectors = (uint32_t)buf[60] | ((uint32_t)buf[61] << 16);
-    if (sectors == 0)
+    if (ata_wait_data_request() != 0)
         return NULL;
 
+    /* IDENTIFY answers with one 512-byte block: 256 16-bit words */
+    uint16_t identify[256];
+    insw(ATA_DATA, identify, sizeof(identify));
+
+    uint32_t sector_count = (uint32_t)identify[60] |
+                            ((uint32_t)identify[61] << 16);
+
     BlockDevice *device = (BlockDevice *)malloc(sizeof(BlockDevice));
-    device->sector_count = sectors;
+    device->sector_count = sector_count;
 
     /* 512 is the ATA default logical sector size; IDENTIFY only reports
        an actual size when a drive's is larger. Classic ATA/IDE drives,
@@ -161,8 +144,6 @@ BlockDevice *ata_block_device_open(void)
     return device;
 }
 
-#define ATA_COMMAND_READ 0x20
-
 int block_device_read(BlockDevice *device, uint64_t lba,
                       uint32_t sector_count, void *buffer)
 {
@@ -170,16 +151,18 @@ int block_device_read(BlockDevice *device, uint64_t lba,
                       (uint8_t)sector_count);
 
     for (uint32_t i = 0; i < sector_count; i++) {
-        ata_wait_data_request();
+        if (ata_wait_data_request() != 0)
+            return -1;
+
         insw(ATA_DATA, (uint8_t *)buffer + (i * device->sector_size),
              device->sector_size);
+
+        /* give the drive time to raise BSY before we check it again */
+        ata_delay_400ns();
     }
 
     return 0;
 }
-
-#define ATA_COMMAND_WRITE       0x30
-#define ATA_COMMAND_CACHE_FLUSH 0xE7
 
 int block_device_write(BlockDevice *device, uint64_t lba,
                        uint32_t sector_count, const void *buffer)
@@ -188,10 +171,15 @@ int block_device_write(BlockDevice *device, uint64_t lba,
                       (uint8_t)sector_count);
 
     for (uint32_t i = 0; i < sector_count; i++) {
-        ata_wait_data_request();
+        if (ata_wait_data_request() != 0)
+            return -1;
+
         outsw(ATA_DATA,
               (const uint8_t *)buffer + (i * device->sector_size),
               device->sector_size);
+
+        /* give the drive time to raise BSY before we check it again */
+        ata_delay_400ns();
     }
 
     /* the drive may only have buffered these sectors in its
